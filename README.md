@@ -257,6 +257,12 @@ python test_autonomy.py
 python test_end_to_end.py
 ```
 
+## Community Files
+
+- `LICENSE`: MIT
+- `CONTRIBUTING.md`: contributor workflow and testing expectations
+- `SECURITY.md`: private security reporting guidance
+
 ## Help
 
 If you publish this on GitHub today, the minimum support flow I recommend is:

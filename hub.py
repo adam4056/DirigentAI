@@ -136,11 +136,12 @@ class DirigentEngine:
         if cmd == "/help":
             return (
                 "Available commands:\n"
-                "  /clear    — Reset this session's conversation history\n"
-                "  /workers  — List all hired specialist workers\n"
-                "  /status   — Show firm status (workers, tasks, session)\n"
-                "  /help     — Show this help\n"
-                "  exit      — Disconnect"
+                "  /clear    - Reset this session's conversation history\n"
+                "  /reset    - Same as /clear\n"
+                "  /workers  - List all hired specialist workers\n"
+                "  /status   - Show firm status (workers, tasks, session)\n"
+                "  /help     - Show this help\n"
+                "  exit      - Disconnect"
             )
 
         return None  # Not a command, pass to AI
