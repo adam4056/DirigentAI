@@ -4,7 +4,7 @@ import os
 import sys
 
 # Add path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from agents.worker import Worker, is_command_safe, is_path_safe
 from core.orchestrator import Orchestrator

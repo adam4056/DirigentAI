@@ -62,7 +62,7 @@ class DirigentClient:
 
     def _print_header(self):
         print()
-        self._center("dirigentai", Fore.WHITE)
+        self._center("DirigentAI", Fore.WHITE)
         self._center("local-first multi-agent console", Fore.LIGHTBLACK_EX)
         print()
 

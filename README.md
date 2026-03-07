@@ -38,8 +38,8 @@ It is usable for local workflows, but it is not production-ready and should be t
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-user>/dirigentAI.git
-cd dirigentAI
+git clone https://github.com/adam4056/DirigentAI.git
+cd DirigentAI
 ```
 
 ### 2. Install Python dependencies
@@ -249,12 +249,19 @@ memory/                 long-term memory and persisted state
 
 ## Tests
 
+These are currently smoke/manual test scripts, not a full automated pytest suite.
+
 ```bash
-python test_init.py
-python test_robustness.py
-python test_security.py
-python test_autonomy.py
-python test_end_to_end.py
+python tests/test_init.py
+python tests/test_robustness.py
+python tests/test_security.py
+python tests/test_end_to_end.py
+```
+
+Optional manual audit script:
+
+```bash
+python tests/manual_autonomy_audit.py
 ```
 
 ## Community Files

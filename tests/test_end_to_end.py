@@ -8,7 +8,7 @@ import logging
 os.environ["HIDE_WORKER_CREATION"] = "true"
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 def test_orchestrator_initialization():
     """Test that orchestrator can be initialized with configuration."""
