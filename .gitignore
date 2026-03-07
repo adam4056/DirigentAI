@@ -24,6 +24,9 @@ env/
 # Runtime state (regenerated at runtime)
 memory/workers.json
 memory/tasks.json
+memory/interactions.jsonl
+memory/cli_session.json
+memory/sessions.json
 
 # NOTE: memory/MEMORY.md is intentionally tracked -- it is the long-term strategic notepad
 

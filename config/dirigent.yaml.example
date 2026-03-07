@@ -1,0 +1,84 @@
+﻿llm_policy:
+  approved_models:
+    - gemini-1.5-flash
+  force_primary_for_all_roles: false
+
+model_mapping:
+  dirigent: gemini-1.5-flash
+  coding: gpt-4o-mini
+  research: claude-3-haiku
+  analysis: gemini-1.5-flash
+  system: gpt-4o-mini
+  creative: claude-3-sonnet
+
+orchestrator:
+  model: gemini-1.5-flash
+  api_key_env: GEMINI_API_KEY
+  temperature: 0.1
+  max_tokens: 2048
+
+workers:
+  max_workers: 15
+  presets:
+    coder:
+      capabilities: [terminal, file_ops]
+      task_type: coding
+      model: gpt-4o-mini
+      description: Specialized in programming and code analysis
+    researcher:
+      capabilities: [web_ops, browser_ops, file_ops]
+      task_type: research
+      model: claude-3-haiku
+      description: Specialized in web research, browsing, and data gathering
+    browser_researcher:
+      capabilities: [browser_ops, web_ops, file_ops]
+      task_type: research
+      model: claude-3-haiku
+      description: Specialized in dynamic websites, login flows, and browser-driven research
+    analyzer:
+      capabilities: [file_ops]
+      task_type: analysis
+      model: gemini-1.5-flash
+      description: Specialized in data analysis and processing
+    admin:
+      capabilities: [terminal, file_ops]
+      task_type: system
+      model: gpt-4o-mini
+      description: Specialized in system administration
+  default_model: gpt-3.5-turbo
+
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  google:
+    api_key_env: GEMINI_API_KEY
+  mistral:
+    api_key_env: MISTRAL_API_KEY
+  cohere:
+    api_key_env: COHERE_API_KEY
+  groq:
+    api_key_env: GROQ_API_KEY
+  openrouter:
+    api_key_env: OPENROUTER_API_KEY
+  xai:
+    api_key_env: XAI_API_KEY
+
+security:
+  command_blacklist:
+    - rm -rf /
+    - rm -rf /*
+    - rm -rf .
+    - rm -rf '*'
+    - 'format c:'
+    - del /f /s /q
+    - shutdown
+    - reboot
+  require_confirmation: false
+  sandbox_mode: false
+
+ui:
+  hide_worker_creation: true
+  show_technical_details: false
+  language: en

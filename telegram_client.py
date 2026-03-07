@@ -12,6 +12,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
     CommandHandler,
+    Application,
 )
 
 load_dotenv()
@@ -117,30 +118,63 @@ class TelegramBridge:
             stop_typing.set()
             await update.message.reply_text(f"System error: {e}")
 
+    async def _send_command_to_hub(self, cmd: str, user_id: str) -> str:
+        """Send a slash command to Hub and return response."""
+        return await self.send_to_hub(cmd, user_id=user_id)
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not update.effective_user:
             return
-
         user_id = str(update.effective_user.id)
         first_name = update.effective_user.first_name
 
-        # /start ALWAYS prints User ID (for easy onboarding)
         welcome_msg = f"Hello {first_name}!\nYour Telegram User ID is: {user_id}\n\n"
-
         if user_id in self.allowed_user_ids:
-            welcome_msg += "✅ You are authorized and can communicate with Dirigent."
+            welcome_msg += (
+                "You are authorized.\n\n"
+                "Commands:\n"
+                "/clear — Reset conversation history\n"
+                "/workers — List hired specialists\n"
+                "/status — Show firm status\n"
+                "/help — Show this message"
+            )
         else:
-            welcome_msg += "❌ You are not on the allowed users list.\nEnter your ID into the system configuration."
-
+            welcome_msg += "You are not on the allowed users list.\nEnter your ID into the system configuration."
         await update.message.reply_text(welcome_msg)
+
+    async def _authorized_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str
+    ):
+        """Handle an authorized slash command by forwarding to Hub."""
+        if not update.effective_user or not update.message:
+            return
+        user_id = str(update.effective_user.id)
+        if user_id not in self.allowed_user_ids:
+            await update.message.reply_text("Unauthorized.")
+            return
+        response = await self._send_command_to_hub(cmd, user_id)
+        await update.message.reply_text(response)
+
+    async def clear_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._authorized_command(update, context, "/clear")
+
+    async def workers_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._authorized_command(update, context, "/workers")
+
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._authorized_command(update, context, "/status")
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._authorized_command(update, context, "/help")
 
     def run(self):
         application = ApplicationBuilder().token(self.token).build()
 
-        # Handler for /start command
         application.add_handler(CommandHandler("start", self.start_command))
-
-        # Handler for all other text messages
+        application.add_handler(CommandHandler("clear", self.clear_command))
+        application.add_handler(CommandHandler("workers", self.workers_command))
+        application.add_handler(CommandHandler("status", self.status_command))
+        application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(
             MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
         )

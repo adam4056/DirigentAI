@@ -4,9 +4,9 @@ import logging
 import os
 import sys
 import time
-import uuid
 from datetime import datetime
 from core.orchestrator import Orchestrator
+from core.interaction_log import log_interaction
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -92,6 +92,59 @@ class DirigentEngine:
             logger.error(f"Scheduler error: {e}")
         return False
 
+    def _handle_command(self, user_input: str, session_id: str) -> str | None:
+        """
+        Handle built-in slash commands without spending AI tokens.
+        Returns response string if handled, None if it should go to AI.
+        """
+        cmd = user_input.lower().strip()
+
+        if cmd in {"/clear", "/reset"}:
+            self.orchestrator.clear_session(session_id)
+            return "Session cleared. Starting fresh conversation."
+
+        if cmd == "/workers":
+            workers = [
+                w for w in self.orchestrator.workers.values() if w.description
+            ]
+            if not workers:
+                return "No permanent specialists hired yet."
+            lines = ["Active specialists:"]
+            for w in workers:
+                lines.append(f"  {w.worker_id}: {w.description} [{', '.join(w.capabilities)}]")
+            return "\n".join(lines)
+
+        if cmd == "/status":
+            from pathlib import Path
+            specialists = [w for w in self.orchestrator.workers.values() if w.description]
+            temp_workers = [w for w in self.orchestrator.workers.values() if not w.description]
+            session_len = len(self.orchestrator.sessions.get(session_id, []))
+            log_size = ""
+            log_path = Path("memory/interactions.jsonl")
+            if log_path.exists():
+                lines = sum(1 for _ in log_path.open(encoding="utf-8"))
+                log_size = f"\n  Interaction log: {lines} entries"
+            return (
+                f"DirigentAI Status\n"
+                f"  Specialists (permanent): {len(specialists)}\n"
+                f"  Temp workers (RAM): {len(temp_workers)}\n"
+                f"  Scheduled tasks: {len(self.scheduled_tasks)}\n"
+                f"  Session turns: {session_len // 2}"
+                f"{log_size}"
+            )
+
+        if cmd == "/help":
+            return (
+                "Available commands:\n"
+                "  /clear    — Reset this session's conversation history\n"
+                "  /workers  — List all hired specialist workers\n"
+                "  /status   — Show firm status (workers, tasks, session)\n"
+                "  /help     — Show this help\n"
+                "  exit      — Disconnect"
+            )
+
+        return None  # Not a command, pass to AI
+
     async def run_routine_task(self, task_description: str):
         """Execute a scheduled/routine task through the Orchestrator."""
         logger.info(f"Running routine: {task_description}")
@@ -105,8 +158,8 @@ class DirigentEngine:
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle a single client TCP connection with session tracking."""
         addr = writer.get_extra_info("peername")
-        # Generate a unique session ID for this client connection
-        session_id = f"client_{uuid.uuid4().hex[:8]}"
+        # Fallback session ID when client does not provide one
+        session_id = "default_cli_session"
         logger.info(f"Connection from {addr} (session: {session_id})")
         self.clients.add(writer)
 
@@ -122,11 +175,26 @@ class DirigentEngine:
 
                 try:
                     request = json.loads(message)
-                    user_input = request.get("text", "")
+                    user_input = request.get("text", "").strip()
+                    source = request.get("source", "cli")
 
                     # Allow client to optionally specify a session_id
                     client_session = request.get("session_id", session_id)
 
+                    # ── Built-in commands (no AI tokens spent) ──────────
+                    cmd_response = self._handle_command(user_input, client_session)
+                    if cmd_response is not None:
+                        response = {
+                            "status": "ok",
+                            "response": cmd_response,
+                            "session_id": client_session,
+                            "workers_active": len(self.orchestrator.workers),
+                        }
+                        writer.write(json.dumps(response).encode() + b"\n")
+                        await writer.drain()
+                        continue
+
+                    # ── Normal AI processing ─────────────────────────────
                     def on_schedule(task_data):
                         if self.add_to_scheduler(task_data):
                             self.scheduled_tasks.append(task_data)
@@ -145,6 +213,16 @@ class DirigentEngine:
 
                     duration = time.time() - start_time
                     logger.info(f"Done [{client_session}] in {duration:.2f}s")
+
+                    # Log interaction to file
+                    log_interaction(
+                        session_id=client_session,
+                        user_input=user_input,
+                        response=response_text or "",
+                        duration_s=duration,
+                        source=source,
+                        workers_active=len(self.orchestrator.workers),
+                    )
 
                     response = {
                         "status": "ok",
