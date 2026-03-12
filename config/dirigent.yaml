@@ -1,7 +1,8 @@
 llm_policy:
   approved_models:
   - deepseek-chat
-  force_primary_for_all_roles: true
+  - openrouter/openai/gpt-5-mini
+  force_primary_for_all_roles: false
 model_mapping:
   dirigent: deepseek-chat
   coding: deepseek-chat
@@ -33,6 +34,15 @@ workers:
       model: deepseek-chat
       task_type: research
       description: Specialized in web research, browsing, and data gathering
+    browser_researcher:
+      capabilities:
+      - browser_ops
+      - web_ops
+      - file_ops
+      model: deepseek-chat
+      task_type: research
+      description: Specialized in dynamic websites, login flows, and browser-driven
+        research
     analyzer:
       capabilities:
       - file_ops
@@ -46,15 +56,15 @@ workers:
       model: deepseek-chat
       task_type: system
       description: Specialized in system administration
-    browser_researcher:
+    developer:
       capabilities:
-      - browser_ops
-      - web_ops
+      - terminal
       - file_ops
-      task_type: research
+      - dev_tools
+      - web_ops
       model: deepseek-chat
-      description: Specialized in dynamic websites, login flows, and browser-driven
-        research
+      task_type: coding
+      description: Specialized in software development with code execution, testing, and dependency management
   default_model: deepseek-chat
 providers:
   openai:

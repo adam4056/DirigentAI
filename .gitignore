@@ -34,6 +34,7 @@ memory/sessions.json
 hello.txt
 apps.txt
 test.txt
+*.test
 
 # OS
 Thumbs.db

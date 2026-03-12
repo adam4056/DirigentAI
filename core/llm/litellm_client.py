@@ -8,6 +8,13 @@ from .base import LLMClient
 
 logger = logging.getLogger(__name__)
 
+# Register new OpenRouter models not yet in litellm's static list
+_NEW_OPENROUTER_MODELS = {
+    "openrouter/hunter-alpha",
+}
+if isinstance(getattr(litellm, "openrouter_models", None), set):
+    litellm.openrouter_models.update(_NEW_OPENROUTER_MODELS)
+
 
 class LiteLLMClient(LLMClient):
     """LiteLLM client for unified multi-provider support."""

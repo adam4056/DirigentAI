@@ -113,6 +113,59 @@ class HeadlessBrowserManager:
                 items.append(f"- {label or '[no text]'} -> {href}")
         return "\n".join(items) if items else "No links found."
 
+    def extract_data(self, session_id: str = "default", selectors: dict = None, as_table: bool = False) -> str:
+        """Extract structured data using CSS selectors."""
+        if selectors is None:
+            selectors = {}
+        
+        session = self._get_or_create_session(session_id)
+        result = {}
+        
+        try:
+            if as_table and len(selectors) == 1:
+                # Extract table data
+                table_selector = list(selectors.values())[0]
+                rows = session.page.locator(table_selector).locator("tr")
+                row_count = rows.count()
+                if row_count == 0:
+                    return "No table rows found."
+                
+                table_data = []
+                for i in range(min(row_count, 50)):  # Limit rows
+                    cells = rows.nth(i).locator("td, th")
+                    cell_count = cells.count()
+                    row_texts = []
+                    for j in range(cell_count):
+                        cell_text = cells.nth(j).inner_text(timeout=1000) or ""
+                        row_texts.append(cell_text.strip())
+                    table_data.append(row_texts)
+                
+                result["table"] = table_data
+                return f"Extracted table with {len(table_data)} rows"
+            
+            else:
+                # Extract individual elements
+                for key, selector in selectors.items():
+                    elements = session.page.locator(selector)
+                    count = elements.count()
+                    if count == 0:
+                        result[key] = None
+                    elif count == 1:
+                        text = elements.first.inner_text(timeout=1000) or ""
+                        result[key] = text.strip()
+                    else:
+                        texts = []
+                        for i in range(min(count, 20)):
+                            text = elements.nth(i).inner_text(timeout=1000) or ""
+                            texts.append(text.strip())
+                        result[key] = texts
+                
+                import json
+                return json.dumps(result, indent=2, ensure_ascii=False)
+        
+        except Exception as e:
+            return f"Error extracting data: {e}"
+
     def close(self, session_id: str = "default") -> str:
         session = self._sessions.pop(session_id, None)
         if not session:
