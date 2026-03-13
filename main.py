@@ -1398,7 +1398,8 @@ def run_update():
     # Parse flags
     dry_run = "--dry-run" in args
     no_deps = "--no-deps" in args
-    stash = "--stash" in args
+    no_stash = "--no-stash" in args
+    stash = "--stash" in args  # kept for backward compatibility
     force = "--force" in args
     help_flag = "--help" in args or "-h" in args
     
@@ -1409,7 +1410,8 @@ def run_update():
         print("Options:")
         print("  --dry-run      Show what would be updated without making changes")
         print("  --no-deps      Update code only, skip dependency updates")
-        print("  --stash        Stash local changes before update, pop afterwards")
+        print("  --no-stash     Do NOT stash local changes (update may conflict)")
+        print("  --stash        (Deprecated) Stash local changes before update")
         print("  --force        Force dependency updates even if no code changes")
         print("  --help, -h     Show this help message")
         print()
@@ -1423,6 +1425,10 @@ def run_update():
     print(f"{Fore.CYAN}[System]{Style.RESET_ALL} Updating DirigentAI...")
     if dry_run:
         print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} DRY RUN: No changes will be made.")
+    if stash:
+        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} --stash flag is deprecated; stashing is now default. Use --no-stash to disable.")
+    if stash and no_stash:
+        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Both --stash and --no-stash specified; --no-stash takes precedence.")
     
     # Check if Git is available
     try:
@@ -1447,16 +1453,21 @@ def run_update():
         
         if has_uncommitted:
             print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} You have uncommitted changes.")
-            if stash and not dry_run:
-                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Stashing changes...")
-                stash_result = subprocess.run(["git", "stash"], capture_output=True, text=True)
-                if stash_result.returncode != 0:
-                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to stash changes: {stash_result.stderr}")
-                    return
-                stashed = True
-            else:
-                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Update will attempt to merge. Use --stash to stash changes first.")
+            if no_stash:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Update will attempt to merge (--no-stash).")
                 stashed = False
+            else:
+                # Auto-stash by default
+                if not dry_run:
+                    print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Stashing changes automatically...")
+                    stash_result = subprocess.run(["git", "stash"], capture_output=True, text=True)
+                    if stash_result.returncode != 0:
+                        print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to stash changes: {stash_result.stderr}")
+                        return
+                    stashed = True
+                else:
+                    print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} [DRY RUN] Would stash changes automatically")
+                    stashed = True
         else:
             stashed = False
         

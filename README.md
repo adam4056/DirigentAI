@@ -147,7 +147,7 @@ python main.py update   # update DirigentAI from GitHub and refresh dependencies
 python main.py          # start hub in background mode
 ```
 
-The `update` command supports optional flags: `--dry-run`, `--no-deps`, `--stash`, `--help`.
+The `update` command supports optional flags: `--dry-run`, `--no-deps`, `--no-stash`, `--force`, `--help`. (The `--stash` flag is deprecated; stashing is now automatic.)
 
 ## How Model Approval Works
 
@@ -232,14 +232,15 @@ This will:
 3. Update Python dependencies
 4. Run diagnostics to ensure everything works
 
-If you have local modifications, the update will attempt to merge them. If conflicts occur, resolve them manually.
+If you have local modifications, the update will automatically stash them before pulling changes, then restore them after. Use `--no-stash` to attempt merging instead (may cause conflicts).
 
 ### Update Options
 
 ```bash
 python main.py update --dry-run    # Show what would change without making changes
 python main.py update --no-deps    # Update code only, skip dependency updates
-python main.py update --stash      # Stash local changes before update, restore after
+python main.py update --no-stash   # Do NOT stash local changes (update may conflict)
+python main.py update --stash      # (Deprecated) Stash local changes before update
 python main.py update --force      # Force dependency updates even if no code changes
 python main.py update --help       # Show all available options
 ```
