@@ -1,8 +1,7 @@
 llm_policy:
   approved_models:
   - deepseek-chat
-  - openrouter/openai/gpt-5-mini
-  force_primary_for_all_roles: false
+  force_primary_for_all_roles: true
 model_mapping:
   dirigent: deepseek-chat
   coding: deepseek-chat
@@ -56,22 +55,6 @@ workers:
       model: deepseek-chat
       task_type: system
       description: Specialized in system administration
-    developer:
-      capabilities:
-      - terminal
-      - file_ops
-      - dev_tools
-      - web_ops
-      model: deepseek-chat
-      task_type: coding
-      description: Specialized in software development with code execution, testing, and dependency management
-    monitor:
-      capabilities:
-      - monitoring_ops
-      - file_ops
-      model: deepseek-chat
-      task_type: system
-      description: Specialized in system monitoring and resource management
   default_model: deepseek-chat
 providers:
   openai:

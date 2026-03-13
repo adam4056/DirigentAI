@@ -37,6 +37,9 @@ logger = logging.getLogger("dirigent.telegram")
 
 # Reduce noise from external libraries
 logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 class TelegramBridge:
@@ -47,6 +50,8 @@ class TelegramBridge:
             set(map(str, allowed_user_ids)) if allowed_user_ids else set()
         )
         logger.info(f"Initialized with {len(self.allowed_user_ids)} allowed users.")
+        if not self.allowed_user_ids:
+            logger.info("No allowed users configured. Bot will only respond to /start command.")
 
     async def send_to_hub(self, text: str, user_id: str = "default"):
         """Send a message to Hub with session tracking per Telegram user."""
@@ -87,28 +92,38 @@ class TelegramBridge:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 1. Ignore messages without text, from bots, or if not from a user
         if not update.message or not update.message.text or not update.effective_user:
+            logger.debug("Ignoring message without text or user")
             return
         if update.effective_user.is_bot:
+            logger.debug(f"Ignoring message from bot: {update.effective_user.id}")
             return
 
         user_id = str(update.effective_user.id)
         chat_id = update.effective_chat.id
+        user_text = update.message.text
+        
+        logger.info(f"Received message from user {user_id} in chat {chat_id}: {user_text[:100]}")
 
         # 2. STRICT SECURITY CHECK
         # User CAN communicate with Core ONLY if their ID is in the allowlist.
         if user_id not in self.allowed_user_ids:
             logger.warning(f"Blocked message attempt from unknown ID: {user_id}")
             if not context.user_data.get("unauthorized_notified"):
-                await update.message.reply_text(
-                    f"Your ID ({user_id}) is not authorized. Communication with core is forbidden.\n"
-                    "Enter this ID into your .env file (TELEGRAM_ALLOWED_USER_IDS)."
-                )
-                context.user_data["unauthorized_notified"] = True
+                logger.info(f"Sending unauthorized notification to user {user_id}")
+                try:
+                    await update.message.reply_text(
+                        f"Your ID ({user_id}) is not authorized. Communication with core is forbidden.\n"
+                        "Enter this ID into your .env file (TELEGRAM_ALLOWED_USER_IDS)."
+                    )
+                    context.user_data["unauthorized_notified"] = True
+                except Exception as e:
+                    logger.error(f"Failed to send unauthorized notification: {e}")
+            else:
+                logger.debug(f"User {user_id} already notified, skipping")
             return
 
         # 3. If authorized, send message to core
-        user_text = update.message.text
-        logger.info(f"Message from {user_id}: {user_text[:50]}...")
+        logger.info(f"Processing authorized message from {user_id}: {user_text[:50]}...")
 
         # Start typing indicator in background
         stop_typing = asyncio.Event()
@@ -133,35 +148,89 @@ class TelegramBridge:
         return await self.send_to_hub(cmd, user_id=user_id)
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        logger.info(f"Received /start command from update: {update}")
         if not update.effective_user:
+            logger.warning("No effective_user in update")
             return
+        
         user_id = str(update.effective_user.id)
-        first_name = update.effective_user.first_name
+        first_name = update.effective_user.first_name or "User"
+        logger.info(f"Processing /start for user {user_id} ({first_name})")
 
-        welcome_msg = f"Hello {first_name}!\nYour Telegram User ID is: {user_id}\n\n"
+        welcome_msg = f"Hello {first_name}!\nYour Telegram User ID is: `{user_id}`\n\n"
         if user_id in self.allowed_user_ids:
             welcome_msg += (
-                "You are authorized.\n\n"
-                "Commands:\n"
+                "✅ You are **authorized**.\n\n"
+                "**Available commands:**\n"
                 "/clear — Reset conversation history\n"
                 "/workers — List hired specialists\n"
                 "/status — Show firm status\n"
-                "/help — Show this message"
+                "/help — Show this message\n\n"
+                "You can now send messages to interact with DirigentAI."
             )
         else:
-            welcome_msg += "You are not on the allowed users list.\nEnter your ID into the system configuration."
-        await update.message.reply_text(welcome_msg)
+            welcome_msg += (
+                "❌ You are **not on the allowed users list**.\n\n"
+                "**To authorize yourself:**\n"
+                "1. Copy your User ID above\n"
+                "2. Add it to the `.env` file:\n"
+                "   `TELEGRAM_ALLOWED_USER_IDS={your_id}`\n"
+                "3. Restart the Telegram bot\n\n"
+                "After authorization, you'll be able to use all commands."
+            )
+        
+        try:
+            # Try to reply to the message
+            if update.message:
+                await update.message.reply_text(welcome_msg, parse_mode='Markdown')
+                logger.info(f"Sent welcome message to user {user_id}")
+            elif update.effective_chat:
+                # Fallback: send directly to chat
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=welcome_msg,
+                    parse_mode='Markdown'
+                )
+                logger.info(f"Sent welcome message to chat {update.effective_chat.id}")
+            else:
+                logger.error(f"Cannot send welcome message - no message or chat in update")
+        except Exception as e:
+            logger.error(f"Failed to send welcome message: {e}", exc_info=True)
+            # Try one more time without Markdown
+            try:
+                if update.message:
+                    await update.message.reply_text(welcome_msg.replace('`', '').replace('*', ''))
+                elif update.effective_chat:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=welcome_msg.replace('`', '').replace('*', '')
+                    )
+            except Exception as e2:
+                logger.error(f"Also failed to send plain text: {e2}")
 
     async def _authorized_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, cmd: str
     ):
         """Handle an authorized slash command by forwarding to Hub."""
+        logger.info(f"Processing authorized command '{cmd}' from update: {update}")
         if not update.effective_user or not update.message:
+            logger.warning(f"No effective_user or message in update for command '{cmd}'")
             return
         user_id = str(update.effective_user.id)
+        logger.info(f"User {user_id} attempting command '{cmd}'")
+        
         if user_id not in self.allowed_user_ids:
-            await update.message.reply_text("Unauthorized.")
+            logger.warning(f"User {user_id} not authorized for command '{cmd}'")
+            await update.message.reply_text(
+                f"❌ Unauthorized. Your User ID is: `{user_id}`\n\n"
+                "Add this ID to `.env` file:\n"
+                "`TELEGRAM_ALLOWED_USER_IDS={your_id}`\n\n"
+                "Use `/start` to see your ID again.",
+                parse_mode='Markdown'
+            )
             return
+        
+        logger.info(f"User {user_id} authorized, forwarding command '{cmd}' to Hub")
         response = await self._send_command_to_hub(cmd, user_id)
         await update.message.reply_text(response)
 
@@ -196,14 +265,15 @@ class TelegramBridge:
         
         try:
             # Build application with conflict prevention settings
+            logger.info(f"Building Telegram bot application with token: {self.token[:10]}...")
             application = (
                 ApplicationBuilder()
                 .token(self.token)
-                .concurrent_updates(True)
-                .rate_limiting(True)
                 .build()
             )
 
+            # Add command handlers
+            logger.info("Adding command handlers...")
             application.add_handler(CommandHandler("start", self.start_command))
             application.add_handler(CommandHandler("clear", self.clear_command))
             application.add_handler(CommandHandler("workers", self.workers_command))
@@ -213,10 +283,12 @@ class TelegramBridge:
                 MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
             )
 
-            logger.info("Bot active.")
+            logger.info(f"Bot active. Allowed users: {len(self.allowed_user_ids)}")
+            logger.info(f"Start command available to all users.")
             
             # Start polling with drop_pending_updates to avoid conflicts
-            application.run_polling(drop_pending_updates=True, allowed_updates=[])
+            logger.info("Starting polling for updates...")
+            application.run_polling(drop_pending_updates=True)
             
         except Exception as e:
             logger.error(f"Error: {e}", exc_info=True)
