@@ -29,51 +29,94 @@ It is usable for local workflows, but it is not production-ready and should be t
 
 ## Installation
 
-### Requirements
+### Quick Start (One Command)
 
-- Python 3.11+
-- One or more API keys for the providers you want to use
-- Playwright Chromium for browser-capable workers
+DirigentAI provides one-command installation for all major platforms:
 
-### 1. Clone the repository
-
+#### Linux/macOS (Bash)
 ```bash
 git clone https://github.com/adam4056/DirigentAI.git
 cd DirigentAI
+chmod +x install.sh  # Make script executable (first time only)
+./install.sh
 ```
 
-### 2. Install Python dependencies
+#### Windows (PowerShell)
+```powershell
+git clone https://github.com/adam4056/DirigentAI.git
+cd DirigentAI
+.\install.ps1
+```
 
+#### Windows (Command Prompt)
+```cmd
+git clone https://github.com/adam4056/DirigentAI.git
+cd DirigentAI
+install.bat
+```
+
+#### Universal Python Installer (All Platforms)
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/adam4056/DirigentAI.git
+cd DirigentAI
+python install.py
 ```
 
-### 3. Install the Playwright browser
+> **Note for Windows**: If you see an execution policy error in PowerShell, run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` first (requires Administrator).
 
-```bash
-python -m playwright install chromium
-```
+### Manual Installation
 
-### 4. Run guided setup
+If you prefer manual installation or the automated installers don't work:
 
-```bash
-python main.py setup
-```
+#### Requirements
+- Python 3.11+
+- Git (for cloning and updates)
+- One or more API keys for the providers you want to use
+- Playwright Chromium for browser-capable workers
 
-The setup wizard will:
-- create `.env`
-- create `config/dirigent.yaml`
-- offer a Quick setup mode with one provider and one recommended model
-- offer an Advanced setup mode with multiple providers and custom role mapping
-- create a safe approved-model policy from those choices
+#### Step-by-Step
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/adam4056/DirigentAI.git
+   cd DirigentAI
+   ```
 
-### 5. Start the app
+2. **Create virtual environment** (recommended)
+   ```bash
+   # Linux/macOS
+   python3 -m venv venv
+   source venv/bin/activate
+   
+   # Windows
+   python -m venv venv
+   venv\Scripts\activate
+   ```
 
-```bash
-python main.py cli
-```
+3. **Install Python dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-That starts the local hub and opens the interactive CLI client.
+4. **Install Playwright browser**
+   ```bash
+   python -m playwright install chromium
+   ```
+
+5. **Run guided setup**
+   ```bash
+   python main.py setup
+   ```
+   The setup wizard will:
+   - Create `.env` for API keys
+   - Create `config/dirigent.yaml` for configuration
+   - Offer Quick setup (one provider) or Advanced setup (multiple providers)
+   - Create a safe approved-model policy from your choices
+
+6. **Start the app**
+   ```bash
+   python main.py cli
+   ```
+   This starts the local hub and opens the interactive CLI client.
 
 ## First Run Flow
 
@@ -204,6 +247,36 @@ python main.py update --help       # Show all available options
 The update command requires Git to be installed and the directory to be a Git repository (cloned from GitHub). If you downloaded a ZIP archive, you'll need to update manually or clone the repository.
 
 ## Troubleshooting
+
+### Installer fails or doesn't run
+
+#### Linux/macOS: "Permission denied"
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+#### Windows PowerShell: "Execution Policy" error
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\install.ps1
+```
+
+#### Python not found
+- Install Python 3.11+ from [python.org](https://python.org/downloads/)
+- Make sure Python is in your PATH
+- Restart your terminal after installation
+
+#### Virtual environment issues
+If the installer fails to create a virtual environment, try manual setup:
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# OR
+venv\Scripts\activate     # Windows
+pip install -r requirements.txt
+python main.py setup
+```
 
 ### `LLM Provider NOT provided`
 
