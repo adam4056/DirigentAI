@@ -1,5 +1,6 @@
 ﻿import json
 import os
+import platform
 
 import yaml
 import signal
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import time
 from copy import deepcopy
+from pathlib import Path
 
 from colorama import Fore, Style, init
 from dotenv import dotenv_values, load_dotenv
@@ -1135,23 +1137,199 @@ def is_port_in_use(port: int) -> bool:
         return handle.connect_ex(("127.0.0.1", port)) == 0
 
 
-def start_component(script_name: str, label: str, hidden: bool = True):
+def is_script_running(script_name: str) -> bool:
+    """Check if a Python script is already running (Linux/Unix only)."""
+    if platform.system().lower() not in ("linux", "darwin", "unix"):
+        # Windows or other - skip check for now
+        return False
+    
+    try:
+        # Try pgrep first (faster)
+        result = subprocess.run(
+            ["pgrep", "-f", script_name],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # pgrep found processes
+            pids = result.stdout.strip().split()
+            # Filter out our own process if we're checking
+            current_pid = os.getpid()
+            other_pids = [pid for pid in pids if pid != str(current_pid)]
+            return len(other_pids) > 0
+        
+        # Fallback to ps aux | grep
+        result = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            lines = result.stdout.splitlines()
+            count = 0
+            current_pid = os.getpid()
+            for line in lines:
+                if script_name in line and str(current_pid) not in line:
+                    count += 1
+            return count > 0
+    except (subprocess.SubprocessError, FileNotFoundError):
+        # Command not available or failed
+        pass
+    
+    return False
+
+
+def terminate_script(script_name: str) -> bool:
+    """Terminate all instances of a Python script (Linux/Unix only)."""
+    if platform.system().lower() not in ("linux", "darwin", "unix"):
+        return False
+    
+    try:
+        print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Attempting to terminate {script_name} processes...")
+        
+        # First try graceful termination
+        result = subprocess.run(
+            ["pkill", "-f", script_name],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        # Wait a bit for processes to terminate
+        time.sleep(2)
+        
+        # Check if any processes are still running
+        if is_script_running(script_name):
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} Processes still running after pkill, trying SIGKILL...")
+            # Try forceful termination with SIGKILL (-9)
+            result = subprocess.run(
+                ["pkill", "-9", "-f", script_name],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            time.sleep(1)
+            
+            # Final check
+            if is_script_running(script_name):
+                print(f"{Fore.RED}[DEBUG]{Style.RESET_ALL} Failed to terminate all {script_name} processes")
+                return False
+            else:
+                print(f"{Fore.GREEN}[DEBUG]{Style.RESET_ALL} Successfully terminated {script_name} processes with SIGKILL")
+                return True
+        else:
+            print(f"{Fore.GREEN}[DEBUG]{Style.RESET_ALL} Successfully terminated {script_name} processes")
+            return True
+            
+    except (subprocess.SubprocessError, FileNotFoundError) as e:
+        print(f"{Fore.RED}[DEBUG]{Style.RESET_ALL} Error terminating {script_name}: {e}")
+        pass
+    
+    return False
+
+
+def start_component(script_name: str, label: str, hidden: bool = True, kill_existing: bool = True, env: dict | None = None):
     print(f"{Fore.CYAN}[System]{Style.RESET_ALL} Starting {label}...")
+    
+    # Special handling for Telegram Bridge due to conflict issues
+    is_telegram = "telegram" in script_name.lower()
+    
+    # Check if script is already running
+    if is_script_running(script_name):
+        if kill_existing:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} {label} is already running. Terminating existing instances...")
+            
+            # For Telegram, add extra termination attempts
+            if is_telegram:
+                print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Telegram Bridge detected, performing extra cleanup...")
+                # Try multiple termination methods
+                for attempt in range(3):
+                    if terminate_script(script_name):
+                        print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Existing {label} instances terminated (attempt {attempt+1}).")
+                        break
+                    else:
+                        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Termination attempt {attempt+1} failed, retrying...")
+                        time.sleep(1)
+                else:
+                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to terminate existing {label} instances after 3 attempts.")
+            else:
+                if terminate_script(script_name):
+                    print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Existing {label} instances terminated.")
+                else:
+                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to terminate existing {label} instances.")
+            
+            # Wait for processes to fully terminate
+            time.sleep(2)
+            
+            # Final verification
+            if is_script_running(script_name):
+                print(f"{Fore.RED}[System]{Style.RESET_ALL} WARNING: {label} processes still running after termination attempts!")
+                if is_telegram:
+                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Telegram conflict may occur. Consider manual cleanup: 'pkill -9 -f {script_name}'")
+        else:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} {label} is already running. Skipping startup.")
+            return None
+    
     flags = 0
     if hidden and os.name == "nt":
         flags = subprocess.CREATE_NO_WINDOW
-    proc = subprocess.Popen([sys.executable, script_name], creationflags=flags)
+    
+    # Prepare environment
+    proc_env = None
+    if env is not None:
+        proc_env = os.environ.copy()
+        proc_env.update(env)
+    
+    proc = subprocess.Popen(
+        [sys.executable, script_name],
+        creationflags=flags,
+        env=proc_env
+    )
     processes.append(proc)
+    
+    # For Telegram, add a small delay to let it initialize
+    if is_telegram:
+        time.sleep(1)
+    
     return proc
 
 
 def cleanup(sig=None, frame=None):
     print(f"\n{Fore.RED}[System]{Style.RESET_ALL} Terminating all components...")
+    
+    # First, try to terminate gracefully
     for proc in processes:
         try:
-            proc.terminate()
+            if proc.poll() is None:  # Process still running
+                proc.terminate()
         except Exception:
             pass
+    
+    # Wait a bit for processes to terminate
+    time.sleep(2)
+    
+    # Force kill any remaining processes
+    for proc in processes:
+        try:
+            if proc.poll() is None:  # Process still running
+                proc.kill()
+        except Exception:
+            pass
+    
+    # Also try to kill any stray telegram_client processes
+    if platform.system().lower() in ("linux", "darwin", "unix"):
+        try:
+            print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Cleaning up stray Telegram processes...")
+            # Try normal kill first
+            subprocess.run(["pkill", "-f", "telegram_client.py"], timeout=3, capture_output=True)
+            time.sleep(1)
+            # Force kill any remaining
+            subprocess.run(["pkill", "-9", "-f", "telegram_client.py"], timeout=3, capture_output=True)
+        except Exception:
+            pass
+    
     sys.exit(0)
 
 
@@ -1161,7 +1339,12 @@ signal.signal(signal.SIGINT, cleanup)
 def run_base(with_cli: bool = False):
     print_banner()
     if not is_port_in_use(8888):
-        start_component("hub.py", "Hub Engine")
+        # Set up environment for hub based on mode
+        hub_env = {}
+        if with_cli:
+            # Reduce log noise in CLI mode
+            hub_env["DIRIGENT_LOG_LEVEL"] = "WARNING"
+        start_component("hub.py", "Hub Engine", env=hub_env)
         for _ in range(10):
             if is_port_in_use(8888):
                 break
@@ -1170,8 +1353,27 @@ def run_base(with_cli: bool = False):
         print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Hub Engine already running.")
 
     load_dotenv(override=True)
-    if os.getenv("TELEGRAM_BOT_TOKEN"):
-        start_component("telegram_client.py", "Telegram Bridge")
+    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} TELEGRAM_BOT_TOKEN value: '{telegram_token}'")
+    if telegram_token:
+        # Check for Telegram lock file (prevent conflicts)
+        lock_file = Path(".telegram_bot.lock")
+        if lock_file.exists():
+            lock_age = time.time() - lock_file.stat().st_mtime
+            if lock_age > 30:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Removing stale Telegram lock file ({lock_age:.0f}s old).")
+                lock_file.unlink(missing_ok=True)
+            else:
+                print(f"{Fore.RED}[System]{Style.RESET_ALL} WARNING: Telegram lock file exists. Another instance may be running.")
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} If you're sure no other instance is running, delete '.telegram_bot.lock' manually.")
+                # Continue anyway, telegram_client.py will handle it
+        
+        print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Starting Telegram Bridge with token: {telegram_token[:10]}...")
+        # Use same log level as hub in CLI mode
+        telegram_env = {}
+        if with_cli:
+            telegram_env["DIRIGENT_LOG_LEVEL"] = "WARNING"
+        start_component("telegram_client.py", "Telegram Bridge", kill_existing=True, env=telegram_env)
     else:
         print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Telegram not configured, skipping.")
 
@@ -1188,14 +1390,157 @@ def run_base(with_cli: bool = False):
             time.sleep(60)
 
 
+def run_update():
+    import sys
+    
+    args = sys.argv[2:] if len(sys.argv) > 2 else []
+    
+    # Parse flags
+    dry_run = "--dry-run" in args
+    no_deps = "--no-deps" in args
+    stash = "--stash" in args
+    force = "--force" in args
+    help_flag = "--help" in args or "-h" in args
+    
+    if help_flag:
+        print(f"{Fore.CYAN}DirigentAI Update Tool{Style.RESET_ALL}")
+        print("Usage: python main.py update [options]")
+        print()
+        print("Options:")
+        print("  --dry-run      Show what would be updated without making changes")
+        print("  --no-deps      Update code only, skip dependency updates")
+        print("  --stash        Stash local changes before update, pop afterwards")
+        print("  --force        Force dependency updates even if no code changes")
+        print("  --help, -h     Show this help message")
+        print()
+        print("The update command will:")
+        print("  1. Fetch latest code from GitHub")
+        print("  2. Pull changes (merge if possible)")
+        print("  3. Update Python dependencies (unless --no-deps)")
+        print("  4. Run diagnostics to verify setup")
+        return
+    
+    print(f"{Fore.CYAN}[System]{Style.RESET_ALL} Updating DirigentAI...")
+    if dry_run:
+        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} DRY RUN: No changes will be made.")
+    
+    # Check if Git is available
+    try:
+        subprocess.run(["git", "--version"], check=True, capture_output=True)
+    except (subprocess.SubprocessError, FileNotFoundError):
+        print(f"{Fore.RED}[System]{Style.RESET_ALL} Git is not installed or not in PATH.")
+        print("Please install Git or update manually:")
+        print("  1. git pull origin master")
+        print("  2. pip install -r requirements.txt --upgrade")
+        return
+    
+    # Check if we're in a Git repository
+    if not os.path.exists(".git"):
+        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Not a Git repository. Manual update required.")
+        print("If you cloned from GitHub, ensure you're in the correct directory.")
+        return
+    
+    try:
+        # Check for uncommitted changes
+        result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        has_uncommitted = bool(result.stdout.strip())
+        
+        if has_uncommitted:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} You have uncommitted changes.")
+            if stash and not dry_run:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Stashing changes...")
+                stash_result = subprocess.run(["git", "stash"], capture_output=True, text=True)
+                if stash_result.returncode != 0:
+                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to stash changes: {stash_result.stderr}")
+                    return
+                stashed = True
+            else:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Update will attempt to merge. Use --stash to stash changes first.")
+                stashed = False
+        else:
+            stashed = False
+        
+        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Fetching latest changes from GitHub...")
+        
+        # Fetch updates
+        if not dry_run:
+            result = subprocess.run(["git", "fetch", "origin"], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to fetch updates: {result.stderr}")
+                return
+        else:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} [DRY RUN] Would run: git fetch origin")
+        
+        # Check if there are updates
+        result = subprocess.run(["git", "status", "-uno"], capture_output=True, text=True)
+        if "Your branch is up to date" in result.stdout:
+            print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Already up to date.")
+            updates_available = False
+        else:
+            updates_available = True
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Updates available.")
+            
+            if not dry_run:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Pulling changes...")
+                result = subprocess.run(["git", "pull", "origin", "master"], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Code updated successfully.")
+                else:
+                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to pull updates: {result.stderr}")
+                    # Try to restore stashed changes if pull failed
+                    if stashed:
+                        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Restoring stashed changes...")
+                        subprocess.run(["git", "stash", "pop"], capture_output=True, text=True)
+                    return
+            else:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} [DRY RUN] Would run: git pull origin master")
+        
+        # Restore stashed changes if any
+        if stashed and not dry_run:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Restoring stashed changes...")
+            pop_result = subprocess.run(["git", "stash", "pop"], capture_output=True, text=True)
+            if pop_result.returncode != 0:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Note: Could not restore stashed changes automatically.")
+                print("Use 'git stash pop' manually to restore.")
+        
+        # Update dependencies if updates were pulled or forced
+        if (updates_available or force) and not no_deps and not dry_run:
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Updating Python dependencies...")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--upgrade"],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Dependencies updated successfully.")
+            else:
+                print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Dependency update had issues: {result.stderr[:200]}")
+        elif dry_run and not no_deps and (updates_available or force):
+            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} [DRY RUN] Would update dependencies")
+        
+        # Check for any required migrations
+        if not dry_run:
+            print(f"{Fore.CYAN}[System]{Style.RESET_ALL} Running diagnostics...")
+            run_doctor()
+        else:
+            print(f"{Fore.CYAN}[System]{Style.RESET_ALL} [DRY RUN] Would run diagnostics")
+        
+    except Exception as e:
+        print(f"{Fore.RED}[System]{Style.RESET_ALL} Update failed: {e}")
+        print("Manual update steps:")
+        print("  1. git pull origin master")
+        print("  2. pip install -r requirements.txt --upgrade")
+        print("  3. python main.py doctor")
+
+
 def print_usage():
-    print("Usage: python main.py [setup|config|models|doctor|cli|onboard]")
+    print("Usage: python main.py [setup|config|models|doctor|cli|onboard|update]")
 
 
 if __name__ == "__main__":
     command = sys.argv[1].lower() if len(sys.argv) > 1 else ""
 
-    if not os.path.exists(ENV_PATH) and command not in {"setup", "onboard", "models", "config"}:
+    if not os.path.exists(ENV_PATH) and command not in {"setup", "onboard", "models", "config", "update"}:
         print(f"{Fore.YELLOW}No .env found. Launching setup first.{Style.RESET_ALL}")
         run_setup()
         if command == "":
@@ -1211,6 +1556,8 @@ if __name__ == "__main__":
         run_doctor()
     elif command == "cli":
         run_base(with_cli=True)
+    elif command == "update":
+        run_update()
     elif command == "":
         run_base(with_cli=False)
     else:

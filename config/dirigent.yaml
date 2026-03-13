@@ -65,6 +65,13 @@ workers:
       model: deepseek-chat
       task_type: coding
       description: Specialized in software development with code execution, testing, and dependency management
+    monitor:
+      capabilities:
+      - monitoring_ops
+      - file_ops
+      model: deepseek-chat
+      task_type: system
+      description: Specialized in system monitoring and resource management
   default_model: deepseek-chat
 providers:
   openai:

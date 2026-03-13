@@ -1,0 +1,311 @@
+diff --git a/config/dirigent.yaml b/config/dirigent.yaml
+index f6d86d6..6a2baa8 100644
+--- a/config/dirigent.yaml
++++ b/config/dirigent.yaml
+@@ -65,6 +65,13 @@ workers:
+       model: deepseek-chat
+       task_type: coding
+       description: Specialized in software development with code execution, testing, and dependency management
++    monitor:
++      capabilities:
++      - monitoring_ops
++      - file_ops
++      model: deepseek-chat
++      task_type: system
++      description: Specialized in system monitoring and resource management
+   default_model: deepseek-chat
+ providers:
+   openai:
+diff --git a/main.py b/main.py
+index bb4c2b0..5560052 100644
+--- a/main.py
++++ b/main.py
+@@ -1,5 +1,6 @@
+ ﻿import json
+ import os
++import platform
+ 
+ import yaml
+ import signal
+@@ -1135,23 +1136,188 @@ def is_port_in_use(port: int) -> bool:
+         return handle.connect_ex(("127.0.0.1", port)) == 0
+ 
+ 
+-def start_component(script_name: str, label: str, hidden: bool = True):
++def is_script_running(script_name: str) -> bool:
++    """Check if a Python script is already running (Linux/Unix only)."""
++    if platform.system().lower() not in ("linux", "darwin", "unix"):
++        # Windows or other - skip check for now
++        return False
++    
++    try:
++        # Try pgrep first (faster)
++        result = subprocess.run(
++            ["pgrep", "-f", script_name],
++            capture_output=True,
++            text=True,
++            timeout=2
++        )
++        if result.returncode == 0 and result.stdout.strip():
++            # pgrep found processes
++            pids = result.stdout.strip().split()
++            # Filter out our own process if we're checking
++            current_pid = os.getpid()
++            other_pids = [pid for pid in pids if pid != str(current_pid)]
++            return len(other_pids) > 0
++        
++        # Fallback to ps aux | grep
++        result = subprocess.run(
++            ["ps", "aux"],
++            capture_output=True,
++            text=True,
++            timeout=2
++        )
++        if result.returncode == 0:
++            lines = result.stdout.splitlines()
++            count = 0
++            current_pid = os.getpid()
++            for line in lines:
++                if script_name in line and str(current_pid) not in line:
++                    count += 1
++            return count > 0
++    except (subprocess.SubprocessError, FileNotFoundError):
++        # Command not available or failed
++        pass
++    
++    return False
++
++
++def terminate_script(script_name: str) -> bool:
++    """Terminate all instances of a Python script (Linux/Unix only)."""
++    if platform.system().lower() not in ("linux", "darwin", "unix"):
++        return False
++    
++    try:
++        print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Attempting to terminate {script_name} processes...")
++        
++        # First try graceful termination
++        result = subprocess.run(
++            ["pkill", "-f", script_name],
++            capture_output=True,
++            text=True,
++            timeout=5
++        )
++        
++        # Wait a bit for processes to terminate
++        time.sleep(2)
++        
++        # Check if any processes are still running
++        if is_script_running(script_name):
++            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} Processes still running after pkill, trying SIGKILL...")
++            # Try forceful termination with SIGKILL (-9)
++            result = subprocess.run(
++                ["pkill", "-9", "-f", script_name],
++                capture_output=True,
++                text=True,
++                timeout=5
++            )
++            time.sleep(1)
++            
++            # Final check
++            if is_script_running(script_name):
++                print(f"{Fore.RED}[DEBUG]{Style.RESET_ALL} Failed to terminate all {script_name} processes")
++                return False
++            else:
++                print(f"{Fore.GREEN}[DEBUG]{Style.RESET_ALL} Successfully terminated {script_name} processes with SIGKILL")
++                return True
++        else:
++            print(f"{Fore.GREEN}[DEBUG]{Style.RESET_ALL} Successfully terminated {script_name} processes")
++            return True
++            
++    except (subprocess.SubprocessError, FileNotFoundError) as e:
++        print(f"{Fore.RED}[DEBUG]{Style.RESET_ALL} Error terminating {script_name}: {e}")
++        pass
++    
++    return False
++
++
++def start_component(script_name: str, label: str, hidden: bool = True, kill_existing: bool = True):
+     print(f"{Fore.CYAN}[System]{Style.RESET_ALL} Starting {label}...")
++    
++    # Special handling for Telegram Bridge due to conflict issues
++    is_telegram = "telegram" in script_name.lower()
++    
++    # Check if script is already running
++    if is_script_running(script_name):
++        if kill_existing:
++            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} {label} is already running. Terminating existing instances...")
++            
++            # For Telegram, add extra termination attempts
++            if is_telegram:
++                print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Telegram Bridge detected, performing extra cleanup...")
++                # Try multiple termination methods
++                for attempt in range(3):
++                    if terminate_script(script_name):
++                        print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Existing {label} instances terminated (attempt {attempt+1}).")
++                        break
++                    else:
++                        print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Termination attempt {attempt+1} failed, retrying...")
++                        time.sleep(1)
++                else:
++                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to terminate existing {label} instances after 3 attempts.")
++            else:
++                if terminate_script(script_name):
++                    print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Existing {label} instances terminated.")
++                else:
++                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Failed to terminate existing {label} instances.")
++            
++            # Wait for processes to fully terminate
++            time.sleep(2)
++            
++            # Final verification
++            if is_script_running(script_name):
++                print(f"{Fore.RED}[System]{Style.RESET_ALL} WARNING: {label} processes still running after termination attempts!")
++                if is_telegram:
++                    print(f"{Fore.RED}[System]{Style.RESET_ALL} Telegram conflict may occur. Consider manual cleanup: 'pkill -9 -f {script_name}'")
++        else:
++            print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} {label} is already running. Skipping startup.")
++            return None
++    
+     flags = 0
+     if hidden and os.name == "nt":
+         flags = subprocess.CREATE_NO_WINDOW
+     proc = subprocess.Popen([sys.executable, script_name], creationflags=flags)
+     processes.append(proc)
++    
++    # For Telegram, add a small delay to let it initialize
++    if is_telegram:
++        time.sleep(1)
++    
+     return proc
+ 
+ 
+ def cleanup(sig=None, frame=None):
+     print(f"\n{Fore.RED}[System]{Style.RESET_ALL} Terminating all components...")
++    
++    # First, try to terminate gracefully
++    for proc in processes:
++        try:
++            if proc.poll() is None:  # Process still running
++                proc.terminate()
++        except Exception:
++            pass
++    
++    # Wait a bit for processes to terminate
++    time.sleep(2)
++    
++    # Force kill any remaining processes
+     for proc in processes:
+         try:
+-            proc.terminate()
++            if proc.poll() is None:  # Process still running
++                proc.kill()
++        except Exception:
++            pass
++    
++    # Also try to kill any stray telegram_client processes
++    if platform.system().lower() in ("linux", "darwin", "unix"):
++        try:
++            print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Cleaning up stray Telegram processes...")
++            # Try normal kill first
++            subprocess.run(["pkill", "-f", "telegram_client.py"], timeout=3, capture_output=True)
++            time.sleep(1)
++            # Force kill any remaining
++            subprocess.run(["pkill", "-9", "-f", "telegram_client.py"], timeout=3, capture_output=True)
+         except Exception:
+             pass
++    
+     sys.exit(0)
+ 
+ 
+@@ -1170,8 +1336,11 @@ def run_base(with_cli: bool = False):
+         print(f"{Fore.GREEN}[System]{Style.RESET_ALL} Hub Engine already running.")
+ 
+     load_dotenv(override=True)
+-    if os.getenv("TELEGRAM_BOT_TOKEN"):
+-        start_component("telegram_client.py", "Telegram Bridge")
++    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
++    print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} TELEGRAM_BOT_TOKEN value: '{telegram_token}'")
++    if telegram_token:
++        print(f"{Fore.CYAN}[DEBUG]{Style.RESET_ALL} Starting Telegram Bridge with token: {telegram_token[:10]}...")
++        start_component("telegram_client.py", "Telegram Bridge", kill_existing=True)
+     else:
+         print(f"{Fore.YELLOW}[System]{Style.RESET_ALL} Telegram not configured, skipping.")
+ 
+diff --git a/telegram_client.py b/telegram_client.py
+index 9c7f0ae..84c655f 100644
+--- a/telegram_client.py
++++ b/telegram_client.py
+@@ -4,6 +4,7 @@ import os
+ import sys
+ import time
+ from datetime import datetime
++from pathlib import Path
+ from dotenv import load_dotenv
+ from telegram import Update
+ from telegram.ext import (
+@@ -168,19 +169,52 @@ class TelegramBridge:
+         await self._authorized_command(update, context, "/help")
+ 
+     def run(self):
+-        application = ApplicationBuilder().token(self.token).build()
+-
+-        application.add_handler(CommandHandler("start", self.start_command))
+-        application.add_handler(CommandHandler("clear", self.clear_command))
+-        application.add_handler(CommandHandler("workers", self.workers_command))
+-        application.add_handler(CommandHandler("status", self.status_command))
+-        application.add_handler(CommandHandler("help", self.help_command))
+-        application.add_handler(
+-            MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
+-        )
++        # Add lock file to prevent multiple instances
++        lock_file = Path(".telegram_bot.lock")
++        if lock_file.exists():
++            # Check if the lock is stale (older than 30 seconds)
++            lock_age = time.time() - lock_file.stat().st_mtime
++            if lock_age > 30:
++                print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Removing stale lock file ({lock_age:.0f}s old).")
++                lock_file.unlink(missing_ok=True)
++            else:
++                print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: ERROR: Another Telegram bot instance appears to be running (lock file exists).")
++                print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: If you're sure no other instance is running, delete '.telegram_bot.lock' and try again.")
++                sys.exit(1)
++        
++        # Create lock file
++        lock_file.touch()
++        
++        try:
++            # Build application with conflict prevention settings
++            application = (
++                ApplicationBuilder()
++                .token(self.token)
++                .concurrent_updates(True)
++                .rate_limiting(True)
++                .build()
++            )
+ 
+-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Bot active.")
+-        application.run_polling()
++            application.add_handler(CommandHandler("start", self.start_command))
++            application.add_handler(CommandHandler("clear", self.clear_command))
++            application.add_handler(CommandHandler("workers", self.workers_command))
++            application.add_handler(CommandHandler("status", self.status_command))
++            application.add_handler(CommandHandler("help", self.help_command))
++            application.add_handler(
++                MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
++            )
++
++            print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Bot active.")
++            
++            # Start polling with drop_pending_updates to avoid conflicts
++            application.run_polling(drop_pending_updates=True, allowed_updates=[])
++            
++        except Exception as e:
++            print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: ERROR: {e}")
++            raise
++        finally:
++            # Clean up lock file on exit
++            lock_file.unlink(missing_ok=True)
+ 
+ 
+ if __name__ == "__main__":

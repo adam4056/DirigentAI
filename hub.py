@@ -16,11 +16,36 @@ from apscheduler.triggers.date import DateTrigger
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
+import os
+
+# Determine log level from environment variable
+log_level_str = os.getenv("DIRIGENT_LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+
+# Determine log destination from environment variable
+log_to_file = os.getenv("DIRIGENT_LOG_TO_FILE", "").lower() in ("1", "true", "yes")
+log_file_path = os.getenv("DIRIGENT_LOG_FILE", "logs/dirigent.log")
+
+if log_to_file:
+    os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+    logging.basicConfig(
+        level=log_level,
+        format="[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[
+            logging.FileHandler(log_file_path, encoding="utf-8"),
+            logging.StreamHandler()  # Also log to console (optional)
+        ]
+    )
+else:
+    logging.basicConfig(
+        level=log_level,
+        format="[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+# Reduce noise from external libraries
+logging.getLogger("litellm").setLevel(logging.WARNING)
 logger = logging.getLogger("dirigent.engine")
 
 

@@ -1,9 +1,11 @@
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -20,6 +22,22 @@ load_dotenv()
 HUB_HOST = "127.0.0.1"
 HUB_PORT = 8888
 
+# Configure logging
+import os
+log_level_str = os.getenv("DIRIGENT_LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_str, logging.INFO)
+
+logging.basicConfig(
+    level=log_level,
+    format="[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
+logger = logging.getLogger("dirigent.telegram")
+
+# Reduce noise from external libraries
+logging.getLogger("litellm").setLevel(logging.WARNING)
+
 
 class TelegramBridge:
     def __init__(self, token, allowed_user_ids):
@@ -28,9 +46,7 @@ class TelegramBridge:
         self.allowed_user_ids = (
             set(map(str, allowed_user_ids)) if allowed_user_ids else set()
         )
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Initialized with {len(self.allowed_user_ids)} allowed users."
-        )
+        logger.info(f"Initialized with {len(self.allowed_user_ids)} allowed users.")
 
     async def send_to_hub(self, text: str, user_id: str = "default"):
         """Send a message to Hub with session tracking per Telegram user."""
@@ -54,9 +70,7 @@ class TelegramBridge:
                 return f"Connection to Dirigent Engine lost (took {duration:.2f}s)."
 
             response = json.loads(data.decode())
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Response received in {duration:.2f}s."
-            )
+            logger.debug(f"Response received in {duration:.2f}s.")
             return response.get("response", "No response from Engine.")
         except Exception as e:
             return f"Error communicating with Engine: {e}"
@@ -83,9 +97,7 @@ class TelegramBridge:
         # 2. STRICT SECURITY CHECK
         # User CAN communicate with Core ONLY if their ID is in the allowlist.
         if user_id not in self.allowed_user_ids:
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] [Security]: Blocked message attempt from unknown ID: {user_id}"
-            )
+            logger.warning(f"Blocked message attempt from unknown ID: {user_id}")
             if not context.user_data.get("unauthorized_notified"):
                 await update.message.reply_text(
                     f"Your ID ({user_id}) is not authorized. Communication with core is forbidden.\n"
@@ -96,9 +108,7 @@ class TelegramBridge:
 
         # 3. If authorized, send message to core
         user_text = update.message.text
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Message from {user_id}: {user_text[:50]}..."
-        )
+        logger.info(f"Message from {user_id}: {user_text[:50]}...")
 
         # Start typing indicator in background
         stop_typing = asyncio.Event()
@@ -168,19 +178,52 @@ class TelegramBridge:
         await self._authorized_command(update, context, "/help")
 
     def run(self):
-        application = ApplicationBuilder().token(self.token).build()
+        # Add lock file to prevent multiple instances
+        lock_file = Path(".telegram_bot.lock")
+        if lock_file.exists():
+            # Check if the lock is stale (older than 30 seconds)
+            lock_age = time.time() - lock_file.stat().st_mtime
+            if lock_age > 30:
+                logger.info(f"Removing stale lock file ({lock_age:.0f}s old).")
+                lock_file.unlink(missing_ok=True)
+            else:
+                logger.error("Another Telegram bot instance appears to be running (lock file exists).")
+                logger.error("If you're sure no other instance is running, delete '.telegram_bot.lock' and try again.")
+                sys.exit(1)
+        
+        # Create lock file
+        lock_file.touch()
+        
+        try:
+            # Build application with conflict prevention settings
+            application = (
+                ApplicationBuilder()
+                .token(self.token)
+                .concurrent_updates(True)
+                .rate_limiting(True)
+                .build()
+            )
 
-        application.add_handler(CommandHandler("start", self.start_command))
-        application.add_handler(CommandHandler("clear", self.clear_command))
-        application.add_handler(CommandHandler("workers", self.workers_command))
-        application.add_handler(CommandHandler("status", self.status_command))
-        application.add_handler(CommandHandler("help", self.help_command))
-        application.add_handler(
-            MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
-        )
+            application.add_handler(CommandHandler("start", self.start_command))
+            application.add_handler(CommandHandler("clear", self.clear_command))
+            application.add_handler(CommandHandler("workers", self.workers_command))
+            application.add_handler(CommandHandler("status", self.status_command))
+            application.add_handler(CommandHandler("help", self.help_command))
+            application.add_handler(
+                MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
+            )
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Telegram]: Bot active.")
-        application.run_polling()
+            logger.info("Bot active.")
+            
+            # Start polling with drop_pending_updates to avoid conflicts
+            application.run_polling(drop_pending_updates=True, allowed_updates=[])
+            
+        except Exception as e:
+            logger.error(f"Error: {e}", exc_info=True)
+            raise
+        finally:
+            # Clean up lock file on exit
+            lock_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
@@ -188,7 +231,7 @@ if __name__ == "__main__":
     allowed_ids_str = os.getenv("TELEGRAM_ALLOWED_USER_IDS")
 
     if not token:
-        print("CRITICAL ERROR: TELEGRAM_BOT_TOKEN missing in .env!")
+        logger.critical("TELEGRAM_BOT_TOKEN missing in .env!")
         sys.exit(1)
 
     allowed_ids = (
@@ -198,9 +241,7 @@ if __name__ == "__main__":
     )
 
     if not allowed_ids:
-        print(
-            "WARNING: TELEGRAM_ALLOWED_USER_IDS is empty. Bot will only respond to /start."
-        )
+        logger.warning("TELEGRAM_ALLOWED_USER_IDS is empty. Bot will only respond to /start.")
 
     bridge = TelegramBridge(token, allowed_ids)
     bridge.run()

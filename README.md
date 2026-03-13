@@ -100,8 +100,11 @@ python main.py config   # edit config and .env from CLI
 python main.py models   # manage approved models and role mapping
 python main.py doctor   # static diagnostics for config, model routing, and env readiness
 python main.py cli      # start hub and open the interactive CLI client
+python main.py update   # update DirigentAI from GitHub and refresh dependencies
 python main.py          # start hub in background mode
 ```
+
+The `update` command supports optional flags: `--dry-run`, `--no-deps`, `--stash`, `--help`.
 
 ## How Model Approval Works
 
@@ -171,6 +174,34 @@ Important:
 - `doctor` does not send live API requests
 - models without configured keys are marked `UNTESTED`, not `OK`
 - custom model IDs are treated with higher risk than curated presets
+
+## Updating DirigentAI
+
+To update DirigentAI to the latest version, use the update command:
+
+```bash
+python main.py update
+```
+
+This will:
+1. Fetch the latest code from GitHub
+2. Pull changes to your local repository
+3. Update Python dependencies
+4. Run diagnostics to ensure everything works
+
+If you have local modifications, the update will attempt to merge them. If conflicts occur, resolve them manually.
+
+### Update Options
+
+```bash
+python main.py update --dry-run    # Show what would change without making changes
+python main.py update --no-deps    # Update code only, skip dependency updates
+python main.py update --stash      # Stash local changes before update, restore after
+python main.py update --force      # Force dependency updates even if no code changes
+python main.py update --help       # Show all available options
+```
+
+The update command requires Git to be installed and the directory to be a Git repository (cloned from GitHub). If you downloaded a ZIP archive, you'll need to update manually or clone the repository.
 
 ## Troubleshooting
 
